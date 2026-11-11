@@ -118,5 +118,9 @@ jobs:
 
       - name: Deploy to S3
         if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-        run: npx tex4npm deploy "${{ vars.S3_BUCKET }}" --delete
+        # No --delete: this bucket also holds other sites in subfolders (for
+        # example sandbox/), and --delete without a prefix would remove them.
+        # The cost is that pages of activities removed from the course stay in
+        # the bucket until deleted by hand.
+        run: npx tex4npm deploy "${{ vars.S3_BUCKET }}"
 
