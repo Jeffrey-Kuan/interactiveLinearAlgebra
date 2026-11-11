@@ -45,17 +45,62 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dist
-          key: tex4npm-dist-${{ github.ref_name }}-${{ github.sha }}
+          # Bump the v-number to force a full rebuild, for example after
+          # changing anything that alters the HTML post-processing.
+          key: tex4npm-dist-v2-${{ github.ref_name }}-${{ github.sha }}
           restore-keys: |
-            tex4npm-dist-${{ github.ref_name }}-
-            tex4npm-dist-
+            tex4npm-dist-v2-${{ github.ref_name }}-
+            tex4npm-dist-v2-
 
       - name: Install npm dependencies
         run: |
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
+      # Workaround for @ximera/answer 2.0.0. Its post-processing step turns
+      # \answer{...} inside display math into an input box, but only looks for
+      # <div class="mathjax-block">. Current TeX4ht writes display math as
+      # <span class="mathjax-block">, so those answers were left as a literal
+      # \answer, which MathJax shows in red. Remove this step once the package
+      # handles both. The grep makes the build fail loudly if the package
+      # changes and the patch no longer applies.
+      - name: Patch answer post-processing for span display math
+        run: |
+          f=node_modules/@ximera/answer/postprocess.js
+          sed -i "s/'span.mathjax-inline, div.mathjax-block'/'span.mathjax-inline, div.mathjax-block, span.mathjax-block'/" "$f"
+          grep -q "div.mathjax-block, span.mathjax-block" "$f"
+          # Record which TeX4ht wrote the wrapper, for comparing with other machines.
+          m=$(kpsewhich mathjax-latex-4ht.4ht || true)
+          echo "TeX4ht MathJax config: $m"
+          if [ -n "$m" ]; then head -3 "$m"; grep -n "mathjax-block" "$m" || true; fi
+          tlmgr --version | head -2 || true
+
       - name: Build site
         run: npm run build
+
+      # Report only, never fails the build: a literal \answer can be legitimate,
+      # for example inside a verbatim listing.
+      - name: Report answer boxes left unconverted
+        run: |
+          grep -rl --include='*.html' '\\answer' dist > /tmp/unconverted.txt || true
+          echo "HTML pages still containing a literal \\answer: $(wc -l < /tmp/unconverted.txt)"
+          head -20 /tmp/unconverted.txt
+
+      # Diagnostic for incremental builds. tex4npm rebuilds a page when any
+      # file it recorded as a dependency is missing or changed. This counts,
+      # across all pages, which kinds of recorded dependencies are already
+      # gone right after a build (those force a rebuild every time).
+      - name: Report recorded dependencies missing after the build
+        run: |
+          find dist -name '*.html' | while read -r h; do
+            grep -o '<meta name="dependency" content="[^"]*"' "$h" | sed -E 's/.*content="[0-9a-f]+ //; s/"$//'
+          done | sort -u > /tmp/deps.txt
+          echo "distinct recorded dependencies: $(wc -l < /tmp/deps.txt)"
+          while read -r d; do [ -e "src/$d" ] || echo "$d"; done < /tmp/deps.txt > /tmp/missing.txt
+          echo "missing after build: $(wc -l < /tmp/missing.txt)"
+          echo "missing, by file extension:"
+          sed -E 's/.*(\.[A-Za-z0-9]+)$/\1/' /tmp/missing.txt | sort | uniq -c | sort -rn
+          echo "present, by file extension:"
+          grep -vxFf /tmp/missing.txt /tmp/deps.txt | sed -E 's/.*(\.[A-Za-z0-9]+)$/\1/' | sort | uniq -c | sort -rn
 
       - name: Sanity check
         run: |
