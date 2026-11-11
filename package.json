@@ -26,5 +26,8 @@
 		"@ximera/verbatim": "*",
 		"@ximera/video": "*",
 		"@ximera/word-choice": "*"
+	},
+	"overrides": {
+		"@modulus-learning/agent": "0.9.1"
 	}
 }
