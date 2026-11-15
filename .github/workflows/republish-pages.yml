@@ -1,0 +1,57 @@
+# Publish the most recent build to GitHub Pages again, without rebuilding.
+#
+# The full build takes about 18 minutes. Its output (dist/) is kept in the
+# Actions cache, so this workflow only fetches that and publishes it, which
+# takes a minute or two. Run it by hand from the Actions tab. It does not
+# touch S3.
+
+name: Republish last build to GitHub Pages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    # Same container as the build, so the cache entry is found: a cache
+    # saved inside a container is only matched from a similar environment.
+    container:
+      image: texlive/texlive:latest
+    steps:
+      - name: Fetch the last build output
+        uses: actions/cache/restore@v4
+        with:
+          path: dist
+          key: tex4npm-dist-v3-${{ github.ref_name }}-none
+          restore-keys: |
+            tex4npm-dist-v3-${{ github.ref_name }}-
+          fail-on-cache-miss: false
+
+      - name: Add start page and check
+        run: |
+          test -s dist/ximera.js
+          if [ ! -f dist/index.html ]; then
+            printf '%s\n' '<!DOCTYPE html>' '<html lang="en"><head><meta charset="utf-8">' '<title>Linear Algebra</title>' '<meta http-equiv="refresh" content="0; url=LinearAlgebraInteractiveIntro.html">' '</head><body><p><a href="LinearAlgebraInteractiveIntro.html">Linear Algebra</a></p></body></html>' > dist/index.html
+          fi
+          echo "HTML pages: $(find dist -name '*.html' | wc -l)"
+          echo "site size: $(du -sh dist | cut -f1)"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  pages:
+    name: Publish to GitHub Pages
+    needs: fetch
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

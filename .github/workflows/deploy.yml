@@ -1,4 +1,7 @@
-# Build the Ximera course with tex4npm and publish dist/ to S3.
+# Build the Ximera course with tex4npm and publish dist/ to GitHub Pages and S3.
+#
+# GitHub Pages needs no secrets. It must be switched on once under
+# Settings > Pages, with "GitHub Actions" as the source.
 #
 # Every push and pull request builds the site. Only pushes to the default
 # branch deploy. Set these in the repo's Settings > Secrets and variables > Actions:
@@ -20,6 +23,8 @@ concurrency:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 jobs:
   build:
@@ -136,12 +141,26 @@ jobs:
           echo "present, by file extension:"
           grep -vxFf /tmp/missing.txt /tmp/deps.txt | sed -E 's/.*(\.[A-Za-z0-9]+)$/\1/' | sort | uniq -c | sort -rn
 
+      # The build has no start page. Send visitors of the site's address to
+      # the course page.
+      - name: Add start page
+        run: |
+          if [ ! -f dist/index.html ]; then
+            printf '%s\n' '<!DOCTYPE html>' '<html lang="en"><head><meta charset="utf-8">' '<title>Linear Algebra</title>' '<meta http-equiv="refresh" content="0; url=LinearAlgebraInteractiveIntro.html">' '</head><body><p><a href="LinearAlgebraInteractiveIntro.html">Linear Algebra</a></p></body></html>' > dist/index.html
+          fi
+
       - name: Sanity check
         run: |
           test -s dist/ximera.js
           test -s dist/ximera.css
           if [ -f src/intent.cfg ]; then test -s dist/answer-a11y.js; fi
           echo "HTML pages built: $(find dist -name '*.html' | wc -l)"
+
+      - name: Upload site for GitHub Pages
+        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
 
       - name: Configure AWS credentials
         if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -159,3 +178,14 @@ jobs:
         # the bucket until deleted by hand.
         run: npx tex4npm deploy "${{ vars.S3_BUCKET }}"
 
+  pages:
+    name: Publish to GitHub Pages
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
