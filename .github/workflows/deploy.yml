@@ -47,10 +47,10 @@ jobs:
           path: dist
           # Bump the v-number to force a full rebuild, for example after
           # changing anything that alters the HTML post-processing.
-          key: tex4npm-dist-v2-${{ github.ref_name }}-${{ github.sha }}
+          key: tex4npm-dist-v3-${{ github.ref_name }}-${{ github.sha }}
           restore-keys: |
-            tex4npm-dist-v2-${{ github.ref_name }}-
-            tex4npm-dist-v2-
+            tex4npm-dist-v3-${{ github.ref_name }}-
+            tex4npm-dist-v3-
 
       - name: Install npm dependencies
         run: |
@@ -74,8 +74,42 @@ jobs:
           if [ -n "$m" ]; then head -3 "$m"; grep -n "mathjax-block" "$m" || true; fi
           tlmgr --version | head -2 || true
 
+      # MathML intent and screen reader support. src/intent.cfg holds a MathJax
+      # configuration that defines \xmunits, \xmabs and the two building
+      # blocks \MathMLintent and \MathMLarg, switches on MathJax's assistive
+      # MathML, and loads answer-a11y.js on every page. ximera.cfg comes from
+      # the @ximera/core package, so the lines are inserted into the installed
+      # copy, just before \begin{document}. Delete src/intent.cfg to switch
+      # all of this off.
+      - name: Add MathML intent configuration
+        run: |
+          f=node_modules/@ximera/core/latex/dist/ximera.cfg
+          if [ -f src/intent.cfg ]; then
+            awk 'FNR==NR{a[n++]=$0; next} /^\\begin\{document\}/{for(i=0;i<n;i++) print a[i]} {print}' src/intent.cfg "$f" > "$f.new"
+            mv "$f.new" "$f"
+            grep -q "xmintent" "$f"
+          fi
+
       - name: Build site
         run: npm run build
+
+      # Site-specific CSS. Appending it to the bundled stylesheet puts these
+      # rules last, so they override the Ximera defaults.
+      - name: Add custom CSS
+        run: |
+          if [ -f src/custom.css ]; then
+            printf '\n/* ---- src/custom.css ---- */\n' >> dist/ximera.css
+            cat src/custom.css >> dist/ximera.css
+          fi
+
+      # Everything under static/ is copied into the site as it is. It holds
+      # answer-a11y.js, which must sit next to ximera.js.
+      - name: Add static files
+        run: |
+          if [ -d static ]; then
+            cp -R static/. dist/
+            echo "static files added: $(find static -type f | wc -l)"
+          fi
 
       # Report only, never fails the build: a literal \answer can be legitimate,
       # for example inside a verbatim listing.
@@ -106,6 +140,7 @@ jobs:
         run: |
           test -s dist/ximera.js
           test -s dist/ximera.css
+          if [ -f src/intent.cfg ]; then test -s dist/answer-a11y.js; fi
           echo "HTML pages built: $(find dist -name '*.html' | wc -l)"
 
       - name: Configure AWS credentials
